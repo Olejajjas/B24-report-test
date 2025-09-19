@@ -32,10 +32,25 @@
     <div id="reportResult"></div>
 
     <script>
+        // Конфигурация приложения
+        const APP_CONFIG = {
+            client_id: 'ВАШ_CLIENT_ID', // Замените на ваш client_id
+            client_secret: 'ВАШ_CLIENT_SECRET' // Замените на ваш client_secret
+        };
+
         // Инициализация приложения
         BX24.init(function() {
-            // Загружаем список пользователей
-            loadUsers();
+            // Проверяем авторизацию
+            if (!BX24.isAuthorized()) {
+                // Если не авторизованы, запрашиваем авторизацию
+                BX24.login(function() {
+                    // После авторизации загружаем пользователей
+                    loadUsers();
+                });
+            } else {
+                // Если уже авторизованы, загружаем пользователей
+                loadUsers();
+            }
             
             // Обработчик кнопки формирования отчета
             document.getElementById('generateReport').addEventListener('click', function() {
@@ -48,6 +63,10 @@
             BX24.callMethod('user.get', {}, function(result) {
                 if (result.error()) {
                     console.error('Ошибка загрузки пользователей:', result.error());
+                    // Пытаемся переавторизоваться при ошибке
+                    BX24.login(function() {
+                        loadUsers();
+                    });
                     return;
                 }
                 
@@ -73,6 +92,7 @@
             });
         }
 
+        // Остальной код без изменений...
         // Функция для формирования отчета
         function generateReport() {
             const employeeId = document.getElementById('employeeSelect').value;
