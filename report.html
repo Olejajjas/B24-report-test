@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Отчет по счетам сотрудника</title>
+    <script src="https://api.bitrix24.com/api/v1/"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .total-row { font-weight: bold; background-color: #e6f2ff; }
+        .paid { color: green; }
+        .new { color: orange; }
+        .refused { color: red; }
+        .loading { display: none; }
+    </style>
+</head>
+<body>
+    <h1>Отчет по счетам за текущий месяц</h1>
+    
+    <div>
+        <label for="employeeSelect">Выберите сотрудника:</label>
+        <select id="employeeSelect">
+            <option value="">Загрузка...</option>
+        </select>
+        <button id="generateReport">Сформировать отчет</button>
+    </div>
+    
+    <div id="loading" class="loading">Загрузка данных...</div>
+    
+    <div id="reportResult"></div>
+
+    <script>
+        // Инициализация приложения
+        BX24.init(function() {
+            // Загружаем список пользователей
+            loadUsers();
+            
+            // Обработчик кнопки формирования отчета
+            document.getElementById('generateReport').addEventListener('click', function() {
+                generateReport();
+            });
+        });
+
+        // Функция для загрузки списка пользователей
+        function loadUsers() {
+            BX24.callMethod('user.get', {}, function(result) {
+                if (result.error()) {
+                    console.error('Ошибка загрузки пользователей:', result.error());
+                    return;
+                }
+                
+                const users = result.data();
+                const select = document.getElementById('employeeSelect');
+                
+                // Очищаем select
+                select.innerHTML = '';
+                
+                // Добавляем опцию "Все сотрудники"
+                const allOption = document.createElement('option');
+                allOption.value = '';
+                allOption.textContent = 'Все сотрудники';
+                select.appendChild(allOption);
+                
+                // Добавляем пользователей в select
+                users.forEach(user => {
+                    const option = document.createElement('option');
+                    option.value = user.ID;
+                    option.textContent = `${user.LAST_NAME} ${user.NAME}`;
+                    select.appendChild(option);
+                });
+            });
+        }
+
+        // Функция для формирования отчета
+        function generateReport() {
+            const employeeId = document.getElementById('employeeSelect').value;
+            const loadingElement = document.getElementById('loading');
+            const resultElement = document.getElementById('reportResult');
+            
+            // Показываем индикатор загрузки
+            loadingElement.style.display = 'block';
+            resultElement.innerHTML = '';
+            
+            // Определяем даты начала и конца текущего месяца
+            const now = new Date();
+            const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+            const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+            
+            // Форматируем даты для фильтра
+            const formatDate = date => {
+                return date.toISOString().split('T')[0];
+            };
+            
+            // Формируем фильтр
+            let filter = {
+                '>=DATE_INSERT': formatDate(firstDay),
+                '<=DATE_INSERT': formatDate(lastDay)
+            };
+            
+            // Если выбран конкретный сотрудник, добавляем его в фильтр
+            if (employeeId) {
+                filter['ASSIGNED_BY_ID'] = employeeId;
+            }
+            
+            // Получаем счета
+            BX24.callMethod('crm.invoice.list', {
+                order: { DATE_INSERT: 'DESC' },
+                filter: filter,
+                select: ['ID', 'ACCOUNT_NUMBER', 'DATE_INSERT', 'STATUS_ID', 'PRICE', 'CURRENCY', 'ASSIGNED_BY_ID', 'UF_DEAL_ID']
+            }, function(result) {
+                loadingElement.style.display = 'none';
+                
+                if (result.error()) {
+                    resultElement.innerHTML = `<p>Ошибка: ${result.error().error_description}</p>`;
+                    return;
+                }
+                
+                const invoices = result.data();
+                displayReport(invoices);
+            });
+        }
+
+        // Функция для отображения отчета
+        function displayReport(invoices) {
+            const resultElement = document.getElementById('reportResult');
+            
+            if (invoices.length === 0) {
+                resultElement.innerHTML = '<p>Счетов за текущий месяц не найдено.</p>';
+                return;
+            }
+            
+            let totalInvoiced = 0;
+            let totalPaid = 0;
+            let html = '<table>';
+            
+            // Заголовок таблицы
+            html += `
+                <tr>
+                    <th>№ счета</th>
+                    <th>Дата выставления</th>
+                    <th>Сумма</th>
+                    <th>Статус</th>
+                </tr>
+            `;
+            
+            // Заполняем таблицу данными
+            invoices.forEach(invoice => {
+                totalInvoiced += parseFloat(invoice.PRICE);
+                
+                // Определяем класс для статуса
+                let statusClass = '';
+                let statusText = '';
+                
+                switch (invoice.STATUS_ID) {
+                    case 'P':
+                        statusClass = 'paid';
+                        statusText = 'Оплачен';
+                        totalPaid += parseFloat(invoice.PRICE);
+                        break;
+                    case 'N':
+                        statusClass = 'new';
+                        statusText = 'Новый';
+                        break;
+                    case 'D':
+                        statusClass = 'refused';
+                        statusText = 'Отклонен';
+                        break;
+                    default:
+                        statusText = invoice.STATUS_ID;
+                }
+                
+                html += `
+                    <tr>
+                        <td>${invoice.ACCOUNT_NUMBER || 'Без номера'}</td>
+                        <td>${formatDisplayDate(invoice.DATE_INSERT)}</td>
+                        <td>${parseFloat(invoice.PRICE).toFixed(2)} ${invoice.CURRENCY}</td>
+                        <td class="${statusClass}">${statusText}</td>
+                    </tr>
+                `;
+            });
+            
+            // Итоговая строка
+            html += `
+                <tr class="total-row">
+                    <td colspan="2"><strong>Итого:</strong></td>
+                    <td><strong>${totalInvoiced.toFixed(2)} ${invoices[0].CURRENCY}</strong></td>
+                    <td><strong>Оплачено: ${totalPaid.toFixed(2)} ${invoices[0].CURRENCY}</strong></td>
+                </tr>
+            `;
+            
+            html += '</table>';
+            resultElement.innerHTML = html;
+        }
+
+        // Функция для форматирования даты
+        function formatDisplayDate(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleDateString('ru-RU');
+        }
+    </script>
+</body>
+</html>
